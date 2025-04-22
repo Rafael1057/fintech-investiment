@@ -1,0 +1,226 @@
+git remote add origin https://github.com/Rafael1057/fintech-investiment.git
+git branch -M main
+git push -u origin main
+import React, { useEffect } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Bar } from "react-chartjs-2";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
+import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, addDoc, query, where, getDocs, deleteDoc } from "firebase/firestore";
+import { initializeApp } from "firebase/app";
+
+const firebaseConfig = {
+  apiKey: "SUA_API_KEY",
+  authDomain: "SEU_DOMINIO.firebaseapp.com",
+  projectId: "SEU_PROJECT_ID",
+  storageBucket: "SEU_BUCKET.appspot.com",
+  messagingSenderId: "SEU_MESSAGING_SENDER_ID",
+  appId: "SEU_APP_ID"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+export default function Dashboard() {
+  const [user, setUser] = React.useState(null);
+  const [email, setEmail] = React.useState("");
+  const [senha, setSenha] = React.useState("");
+  const [valor, setValor] = React.useState(1000);
+  const [prazo, setPrazo] = React.useState(12);
+  const [saldo, setSaldo] = React.useState(0);
+  const [historico, setHistorico] = React.useState([]);
+  const [investimentos, setInvestimentos] = React.useState([]);
+  const rendimento = 0.02;
+  const resultado = valor * Math.pow(1 + rendimento, prazo);
+
+  useEffect(() => {
+    onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setUser(user);
+        const docRef = doc(db, "usuarios", user.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setSaldo(docSnap.data().saldo);
+        } else {
+          await setDoc(docRef, { saldo: 1200 });
+          setSaldo(1200);
+        }
+
+        const transacoesSnap = await getDocs(query(collection(db, "transacoes"), where("uid", "==", user.uid)));
+        const historicoArray = transacoesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setHistorico(historicoArray);
+
+        const investimentosAtivos = historicoArray.filter(tx => tx.tipo === "Investimento");
+        setInvestimentos(investimentosAtivos);
+      } else {
+        setUser(null);
+      }
+    });
+  }, []);
+
+  const login = () => {
+    signInWithEmailAndPassword(auth, email, senha).catch(console.error);
+  };
+
+  const cadastrar = () => {
+    createUserWithEmailAndPassword(auth, email, senha).catch(console.error);
+  };
+
+  const depositar = async () => {
+    const novoSaldo = saldo + valor;
+    setSaldo(novoSaldo);
+    if (user) {
+      await updateDoc(doc(db, "usuarios", user.uid), { saldo: novoSaldo });
+      const transacao = await addDoc(collection(db, "transacoes"), {
+        uid: user.uid,
+        tipo: "Depósito",
+        valor,
+        data: new Date().toISOString(),
+      });
+      setHistorico(prev => [...prev, { id: transacao.id, tipo: "Depósito", valor, data: new Date().toISOString() }]);
+    }
+  };
+
+  const investir = async () => {
+    if (valor > saldo) {
+      alert("Saldo insuficiente para investimento.");
+      return;
+    }
+    const novoSaldo = saldo - valor;
+    setSaldo(novoSaldo);
+    if (user) {
+      await updateDoc(doc(db, "usuarios", user.uid), { saldo: novoSaldo });
+      const transacao = await addDoc(collection(db, "transacoes"), {
+        uid: user.uid,
+        tipo: "Investimento",
+        valor,
+        prazo,
+        rendimentoEstimado: resultado,
+        data: new Date().toISOString(),
+      });
+      const novoInvest = { id: transacao.id, tipo: "Investimento", valor, prazo, rendimentoEstimado: resultado, data: new Date().toISOString() };
+      setHistorico(prev => [...prev, novoInvest]);
+      setInvestimentos(prev => [...prev, novoInvest]);
+    }
+  };
+
+  const resgatarInvestimento = async (id, valorResgate) => {
+    const novoSaldo = saldo + valorResgate;
+    setSaldo(novoSaldo);
+    await updateDoc(doc(db, "usuarios", user.uid), { saldo: novoSaldo });
+    await deleteDoc(doc(db, "transacoes", id));
+    setInvestimentos(prev => prev.filter(item => item.id !== id));
+    setHistorico(prev => [...prev, { tipo: "Resgate", valor: valorResgate, data: new Date().toISOString() }]);
+    await addDoc(collection(db, "transacoes"), {
+      uid: user.uid,
+      tipo: "Resgate",
+      valor: valorResgate,
+      data: new Date().toISOString(),
+    });
+  };
+
+  const chartData = {
+    labels: ["Hoje", `${prazo} meses`],
+    datasets: [
+      {
+        label: "Evolução do Investimento",
+        backgroundColor: "#4ade80",
+        data: [valor, resultado],
+      },
+    ],
+  };
+
+  if (!user) {
+    return (
+      <div className="p-4 max-w-md mx-auto">
+        <h1 className="text-xl font-bold mb-4">Login / Cadastro</h1>
+        <div className="space-y-2">
+          <Input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <Input type="password" placeholder="Senha" value={senha} onChange={(e) => setSenha(e.target.value)} />
+          <Button onClick={login}>Entrar</Button>
+          <Button onClick={cadastrar} variant="outline">Cadastrar</Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 max-w-xl mx-auto">
+      <h1 className="text-2xl font-bold mb-4">Dashboard do Usuário</h1>
+
+      <Card className="mb-4">
+        <CardContent className="space-y-2">
+          <p className="text-lg">Saldo Atual: <span className="text-green-600 font-semibold">R$ {saldo.toFixed(2)}</span></p>
+          <Button onClick={depositar}>Depositar R$ {valor}</Button>
+        </CardContent>
+      </Card>
+
+      <h2 className="text-xl font-semibold mb-2">Simulador de Investimentos</h2>
+      <Card className="mb-4">
+        <CardContent className="space-y-4">
+          <div>
+            <label className="block mb-1">Valor a Investir (R$)</label>
+            <Input
+              type="number"
+              value={valor}
+              onChange={(e) => setValor(Number(e.target.value))}
+            />
+          </div>
+          <div>
+            <label className="block mb-1">Prazo (meses)</label>
+            <Input
+              type="number"
+              value={prazo}
+              onChange={(e) => setPrazo(Number(e.target.value))}
+            />
+          </div>
+          <p className="text-green-600 font-semibold">
+            Rendimento Estimado: R$ {resultado.toFixed(2)}
+          </p>
+          <Button onClick={investir}>Investir</Button>
+        </CardContent>
+      </Card>
+
+      <div className="bg-white rounded-xl p-4 shadow mb-4">
+        <Bar data={chartData} />
+      </div>
+
+      <Card className="mb-4">
+        <CardContent>
+          <h2 className="text-lg font-semibold mb-2">Investimentos Ativos</h2>
+          {investimentos.length === 0 ? (
+            <p className="text-sm text-gray-500">Nenhum investimento ativo.</p>
+          ) : (
+            <ul className="text-sm space-y-2">
+              {investimentos.map((inv) => (
+                <li key={inv.id} className="border p-2 rounded">
+                  <p><strong>Valor:</strong> R$ {inv.valor}</p>
+                  <p><strong>Prazo:</strong> {inv.prazo} meses</p>
+                  <p><strong>Rendimento Estimado:</strong> R$ {inv.rendimentoEstimado.toFixed(2)}</p>
+                  <Button size="sm" variant="outline" className="mt-2" onClick={() => resgatarInvestimento(inv.id, inv.rendimentoEstimado)}>
+                    Resgatar
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="space-y-2">
+          <h2 className="text-lg font-semibold">Histórico de Transações</h2>
+          <ul className="text-sm text-gray-700">
+            {historico.map((item, index) => (
+              <li key={index} className="border-b py-1">
+                <strong>{item.tipo}</strong> de R$ {item.valor} em {new Date(item.data).toLocaleDateString("pt-BR")}
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
