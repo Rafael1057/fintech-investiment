@@ -1,6 +1,3 @@
-git remote add origin https://github.com/Rafael1057/fintech-investiment.git
-git branch -M main
-git push -u origin main
 import React, { useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
